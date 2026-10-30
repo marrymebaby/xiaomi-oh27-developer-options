@@ -23,8 +23,8 @@ mkdir -p "$OUT/classes" "$OUT/dex" "$OUT/apk" "$OUT/gen"
     --java "$OUT/gen" \
     --min-sdk-version 26 \
     --target-sdk-version 35 \
-    --version-code 5 \
-    --version-name 1.4 \
+    --version-code 6 \
+    --version-name 1.5 \
     --auto-add-overlay \
     -R "$OUT/res.zip"
 

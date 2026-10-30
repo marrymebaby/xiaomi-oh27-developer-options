@@ -9,7 +9,7 @@
 ## 下载
 
 - [下载最新版 APK](https://github.com/marrymebaby/xiaomi-oh27-developer-options/releases/latest)
-- [v1.4 发布页](https://github.com/marrymebaby/xiaomi-oh27-developer-options/releases/tag/v1.4)
+- [v1.4 发布页](https://github.com/marrymebaby/xiaomi-oh27-developer-options/releases/tag/v1.5)
 
 下载附件 `SettingsEntryHelper-v1.4.apk`，不是 GitHub 自动生成的 Source code 压缩包。APK 使用开发调试证书签名，不是小米官方应用。
 
@@ -30,7 +30,7 @@
 
 1. 将 APK 传到屏幕上，通过文件管理器安装；如系统要求，按提示允许该来源安装。首次使用不需要已有 ADB。
 2. 打开 **Settings Entry Helper**，确认顶部显示 **1.4**。
-3. 点击第一个按钮：**Open developer dashboard (OH27 firmware route)**。
+3. 界面默认跟随系统语言，可用左下角「切换到中文 / Switch to English」实时切换；点击第一个按钮：**打开开发者面板（OH27 固件路由）**。
 4. 在打开的系统开发者选项面板中，手动开启顶部总开关，并确认系统警告。
 5. 如需连接电脑，再手动开启 **USB 调试**。
 6. 使用支持数据传输的 USB 线连接电脑，只确认你信任的电脑的 RSA 授权提示。

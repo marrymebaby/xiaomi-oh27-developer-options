@@ -14,6 +14,7 @@ import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -22,7 +23,7 @@ import android.text.method.ScrollingMovementMethod;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.Button;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -44,29 +45,47 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
 public class MainActivity extends Activity {
+    // Palette mirrors the OH27 control-center design (HyperOS Settings style).
+    private static final int BG = 0xFFF3F4F6;
+    private static final int CARD = 0xFFFFFFFF;
+    private static final int SEPARATOR = 0xFFECEDEF;
+    private static final int TEXT = 0xFF191919;
+    private static final int MUTED = 0xFF999B9F;
+    private static final int ACCENT = 0xFF3482FF;
+    private static final int NAV_SELECTED = 0xFFE9EAEE;
+    private static final int LOG_BG = 0xFF1F252D;
+    private static final int LOG_TEXT = 0xFFEBEEF2;
+
     private static final String SETTINGS_PACKAGE = "com.android.settings";
     private static final String FACTORY_PACKAGE = "com.mediatek.factorymode";
-    private static final String TAG = "SettingsEntryHelper";
     private static final int EXPORT_SETTINGS = 1001;
     private static final int EXPORT_FACTORY = 1002;
 
-    private LinearLayout root;
+    // Static so a language switch (which rebuilds the UI) keeps the log.
+    private static final StringBuilder logText = new StringBuilder();
+    private static String lastAssistLog = "";
+    private static boolean exporting;
+
     private LinearLayout candidateList;
     private TextView logView;
-    private final StringBuilder logText = new StringBuilder();
+    private LinearLayout navColumn;
+    private final List<TextView> navRows = new ArrayList<>();
+    private final List<View> panes = new ArrayList<>();
     private final Set<String> listedCandidates = new HashSet<>();
-    private String lastAssistLog = "";
-    private boolean exporting;
+    private int selected;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        L.load(this);
         buildUi();
-        appendLog("Settings Entry Helper started");
-        appendLog("No root. Settings export copies APK code only, not app data.");
+        appendLog(L.t("Settings Entry Helper started", "设置入口助手已启动"));
+        appendLog(L.t("No root. Settings export copies APK code only, not app data.",
+                "无 root。设置导出仅复制 APK 代码，不包含应用数据。"));
         readState();
         addKnownCandidates();
         scanSettingsActivities();
+        showPane(selected);
     }
 
     @Override
@@ -75,157 +94,404 @@ public class MainActivity extends Activity {
         syncAssistLog();
     }
 
-    private void buildUi() {
-        ScrollView scroll = new ScrollView(this);
-        scroll.setFillViewport(true);
-        scroll.setBackgroundColor(Color.rgb(246, 244, 238));
+    private String versionName() {
+        try {
+            return getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+        } catch (Exception e) {
+            return "";
+        }
+    }
 
-        root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(28), dp(24), dp(28), dp(32));
-        scroll.addView(root, new ScrollView.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT));
-        setContentView(scroll);
+    private GradientDrawable cardBg() {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setColor(CARD);
+        drawable.setCornerRadius(dp(24));
+        return drawable;
+    }
+
+    private GradientDrawable navBg(boolean selectedRow) {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setColor(selectedRow ? NAV_SELECTED : Color.TRANSPARENT);
+        drawable.setCornerRadius(dp(14));
+        return drawable;
+    }
+
+    private void buildUi() {
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.HORIZONTAL);
+        root.setBackgroundColor(BG);
+        setContentView(root);
+
+        navColumn = new LinearLayout(this);
+        navColumn.setOrientation(LinearLayout.VERTICAL);
+        navColumn.setPadding(dp(14), dp(22), dp(10), dp(18));
+        root.addView(navColumn, new LinearLayout.LayoutParams(dp(186),
+                ViewGroup.LayoutParams.MATCH_PARENT));
 
         TextView title = new TextView(this);
-        title.setText("Settings Entry Helper 1.4");
-        title.setTextSize(30);
+        title.setText(L.t("设置入口助手", "Settings Entry Helper"));
+        title.setTextSize(24);
         title.setTypeface(Typeface.DEFAULT_BOLD);
-        title.setTextColor(Color.rgb(25, 30, 36));
-        root.addView(title);
+        title.setTextColor(TEXT);
+        navColumn.addView(title);
 
-        TextView subtitle = new TextView(this);
-        subtitle.setText("Direct probes for hidden Android Settings pages. "
-                + "Watch the log after each button: a page can exist but still close itself.");
-        subtitle.setTextSize(15);
-        subtitle.setTextColor(Color.rgb(70, 76, 84));
-        subtitle.setPadding(0, dp(8), 0, dp(18));
-        root.addView(subtitle);
+        TextView version = new TextView(this);
+        version.setText("v" + versionName());
+        version.setTextSize(13);
+        version.setTextColor(MUTED);
+        version.setPadding(0, dp(2), 0, dp(16));
+        navColumn.addView(version);
 
-        addSection("Quick probes");
-        addActionButton("Open developer dashboard (OH27 firmware route)", new Runnable() {
-            @Override
-            public void run() {
-                openFirmwareDeveloperDashboard();
+        String[] navLabels = {
+                "⚙  " + L.t("快捷入口", "Quick entries"),
+                "ⓘ  " + L.t("诊断与写入", "Diagnostics"),
+                "⬇  " + L.t("导出分析", "Export"),
+                "⌕  " + L.t("组件探测", "Probes"),
+                "7× " + L.t("连点助手", "Tap assist"),
+                "☰  " + L.t("运行日志", "Log")};
+        navRows.clear();
+        for (int i = 0; i < navLabels.length; i++) {
+            final int index = i;
+            TextView row = new TextView(this);
+            row.setText(navLabels[i]);
+            row.setTextSize(15);
+            row.setTextColor(MUTED);
+            row.setPadding(dp(14), 0, dp(14), 0);
+            row.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+            row.setMinimumHeight(dp(44));
+            row.setBackground(navBg(false));
+            row.setOnClickListener(new View.OnClickListener() {
+                @Override public void onClick(View v) { showPane(index); }
+            });
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            params.setMargins(0, 0, 0, dp(4));
+            navColumn.addView(row, params);
+            navRows.add(row);
+        }
+
+        View spacer = new View(this);
+        navColumn.addView(spacer, new LinearLayout.LayoutParams(1, 0, 1));
+
+        TextView langRow = new TextView(this);
+        langRow.setText(L.ZH.equals(L.current()) ? "Switch to English" : "切换到中文");
+        langRow.setTextSize(14);
+        langRow.setTextColor(ACCENT);
+        langRow.setBackground(navBg(false));
+        langRow.setPadding(dp(14), 0, dp(14), 0);
+        langRow.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+        langRow.setMinimumHeight(dp(44));
+        langRow.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                L.set(MainActivity.this, L.ZH.equals(L.current()) ? L.EN : L.ZH);
+                buildUi();
+                showPane(selected);
             }
         });
-        addActionButton("Export FactoryMode APK + report (ZIP)", new Runnable() {
-            @Override
-            public void run() {
-                choosePackageExport(EXPORT_FACTORY);
-            }
+        navColumn.addView(langRow, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setBackground(cardBg());
+        card.setPadding(dp(24), dp(20), dp(24), dp(24));
+        LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.MATCH_PARENT);
+        cardParams.setMargins(dp(4), dp(14), dp(14), dp(14));
+        root.addView(card, cardParams);
+
+        panes.clear();
+        panes.add(quickPane());
+        panes.add(diagPane());
+        panes.add(exportPane());
+        panes.add(probePane());
+        panes.add(assistPane());
+        panes.add(logPane());
+        for (View pane : panes) {
+            pane.setVisibility(View.GONE);
+            card.addView(pane, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        }
+    }
+
+    private void showPane(int index) {
+        selected = index;
+        for (int i = 0; i < panes.size(); i++) {
+            panes.get(i).setVisibility(i == index ? View.VISIBLE : View.GONE);
+        }
+        for (int i = 0; i < navRows.size(); i++) {
+            TextView row = navRows.get(i);
+            row.setBackground(navBg(i == index));
+            row.setTextColor(i == index ? TEXT : MUTED);
+            row.setTypeface(i == index ? Typeface.DEFAULT_BOLD : Typeface.DEFAULT);
+        }
+    }
+
+    private LinearLayout paneShell(String number, String caption, String note) {
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        LinearLayout pane = new LinearLayout(this);
+        pane.setOrientation(LinearLayout.VERTICAL);
+        scroll.addView(pane, new ScrollView.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        pane.setTag(scroll);
+
+        TextView header = new TextView(this);
+        header.setText(number + "   " + caption);
+        header.setTextSize(24);
+        header.setTypeface(Typeface.DEFAULT_BOLD);
+        header.setTextColor(TEXT);
+        pane.addView(header);
+
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setBackground(cardBg());
+        card.setPadding(dp(22), dp(6), dp(22), dp(10));
+        LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        cardParams.setMargins(0, dp(14), 0, 0);
+        pane.addView(card, cardParams);
+
+        if (note != null) {
+            TextView noteView = new TextView(this);
+            noteView.setText(note);
+            noteView.setTextSize(13);
+            noteView.setTextColor(MUTED);
+            noteView.setPadding(0, dp(10), 0, dp(12));
+            pane.addView(noteView);
+        }
+        return pane;
+    }
+
+    private LinearLayout cardOf(View pane) {
+        return (LinearLayout) ((ViewGroup) pane).getChildAt(1);
+    }
+
+    private void addSeparator(LinearLayout card) {
+        View line = new View(this);
+        line.setBackgroundColor(SEPARATOR);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Math.max(1, dp(1)));
+        params.setMargins(dp(2), 0, dp(2), 0);
+        card.addView(line, params);
+    }
+
+    private View actionRow(String label, final Runnable action) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+        row.setMinimumHeight(dp(60));
+        row.setClickable(true);
+        row.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { action.run(); }
         });
-        addActionButton("Export Settings APK + component report (ZIP)", new Runnable() {
-            @Override
-            public void run() {
-                choosePackageExport(EXPORT_SETTINGS);
-            }
+
+        TextView labelView = new TextView(this);
+        labelView.setText(label);
+        labelView.setTextSize(16);
+        labelView.setTextColor(TEXT);
+        labelView.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { action.run(); }
         });
-        addActionButton("Read current settings state", new Runnable() {
-            @Override
-            public void run() {
-                int start = logText.length();
-                readState();
-                showMessage("Current settings state", logText.substring(start).trim());
-            }
+        row.addView(labelView, new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+
+        TextView chevron = new TextView(this);
+        chevron.setText("›");
+        chevron.setTextSize(20);
+        chevron.setTextColor(MUTED);
+        chevron.setPadding(dp(8), 0, 0, 0);
+        row.addView(chevron, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        return row;
+    }
+
+    private View noteRow(String text) {
+        TextView view = new TextView(this);
+        view.setText(text);
+        view.setTextSize(13);
+        view.setTextColor(MUTED);
+        view.setPadding(0, dp(12), 0, dp(12));
+        return view;
+    }
+
+    private View candidateRow(String label, String sub, final ComponentName component) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.VERTICAL);
+        row.setPadding(0, dp(12), 0, dp(12));
+        row.setClickable(true);
+        row.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { launchComponent(component); }
         });
-        addActionButton("Open About device / Device info", new Runnable() {
-            @Override
-            public void run() {
+
+        TextView labelView = new TextView(this);
+        labelView.setText(label);
+        labelView.setTextSize(15);
+        labelView.setTextColor(TEXT);
+        row.addView(labelView);
+
+        TextView subView = new TextView(this);
+        subView.setText(sub);
+        subView.setTextSize(12);
+        subView.setTextColor(MUTED);
+        subView.setPadding(0, dp(2), 0, 0);
+        row.addView(subView);
+        return row;
+    }
+
+    private LinearLayout quickPane() {
+        LinearLayout pane = paneShell("01", L.t("快捷入口", "Quick entries"),
+                L.t("打开系统隐藏页面后请观察是否自动关闭；固件路由是实测可用的开发者面板入口。",
+                        "Open a system page, then watch whether it closes itself. The firmware route is the verified developer dashboard entry."));
+        LinearLayout card = cardOf(pane);
+        card.addView(actionRow(L.t("打开开发者面板（OH27 固件路由）",
+                "Open developer dashboard (OH27 firmware route)"), new Runnable() {
+            @Override public void run() { openFirmwareDeveloperDashboard(); }
+        }));
+        addSeparator(card);
+        card.addView(actionRow(L.t("关于设备 / 本机信息", "About device / Device info"),
+                new Runnable() {
+            @Override public void run() {
                 launchAction(Settings.ACTION_DEVICE_INFO_SETTINGS, "About device");
             }
-        });
-        addActionButton("Open Developer options (standard intent)", new Runnable() {
-            @Override
-            public void run() {
+        }));
+        addSeparator(card);
+        card.addView(actionRow(L.t("开发者选项（标准 Intent）",
+                "Developer options (standard intent)"), new Runnable() {
+            @Override public void run() {
                 launchAction(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS,
                         "Developer options");
             }
-        });
-        addActionButton("Try enabling DEVELOPMENT_SETTINGS_ENABLED", new Runnable() {
-            @Override
-            public void run() {
-                tryWriteGlobal(Settings.Global.DEVELOPMENT_SETTINGS_ENABLED, 1);
-            }
-        });
-        addActionButton("Try enabling ADB_ENABLED", new Runnable() {
-            @Override
-            public void run() {
-                tryWriteGlobal(Settings.Global.ADB_ENABLED, 1);
-            }
-        });
-        addActionButton("Open Settings home", new Runnable() {
-            @Override
-            public void run() {
-                launchAction(Settings.ACTION_SETTINGS, "Settings home");
-            }
-        });
-        addActionButton("Open Wi-Fi settings", new Runnable() {
-            @Override
-            public void run() {
+        }));
+        addSeparator(card);
+        card.addView(actionRow(L.t("设置主页", "Settings home"), new Runnable() {
+            @Override public void run() { launchAction(Settings.ACTION_SETTINGS, "Settings home"); }
+        }));
+        addSeparator(card);
+        card.addView(actionRow(L.t("WLAN 设置", "Wi-Fi settings"), new Runnable() {
+            @Override public void run() {
                 launchAction(Settings.ACTION_WIRELESS_SETTINGS, "Wi-Fi settings");
             }
-        });
-        addActionButton("Open Accessibility settings", new Runnable() {
-            @Override
-            public void run() {
+        }));
+        addSeparator(card);
+        card.addView(actionRow(L.t("无障碍设置", "Accessibility settings"), new Runnable() {
+            @Override public void run() {
                 launchAction(Settings.ACTION_ACCESSIBILITY_SETTINGS,
                         "Accessibility settings");
             }
-        });
-        addActionButton("Open Settings app info", new Runnable() {
-            @Override
-            public void run() {
-                openPackageInfo(SETTINGS_PACKAGE);
-            }
-        });
-        addActionButton("Copy diagnostic log", new Runnable() {
-            @Override
-            public void run() {
-                copyLog();
-            }
-        });
-        addActionButton("Share diagnostic log", new Runnable() {
-            @Override
-            public void run() {
-                shareLog();
-            }
-        });
+        }));
+        addSeparator(card);
+        card.addView(actionRow(L.t("设置应用信息页", "Settings app info"), new Runnable() {
+            @Override public void run() { openPackageInfo(SETTINGS_PACKAGE); }
+        }));
+        return pane;
+    }
 
-        addSection("Optional build-number tap assist");
-        addActionButton("Arm tap assist and open Accessibility", new Runnable() {
-            @Override
-            public void run() {
+    private LinearLayout diagPane() {
+        LinearLayout pane = paneShell("02", L.t("诊断与写入", "Diagnostics"),
+                L.t("写入类操作在未授权时会被系统拒绝并记录到日志；日志内容保持英文原文便于检索。",
+                        "Write attempts are rejected by the system without permission and logged; log lines stay in English for searchability."));
+        LinearLayout card = cardOf(pane);
+        card.addView(actionRow(L.t("读取当前设置状态", "Read current settings state"), new Runnable() {
+            @Override public void run() {
+                int start = logText.length();
+                readState();
+                showMessage(L.t("当前设置状态", "Current settings state"),
+                        logText.substring(start).trim());
+            }
+        }));
+        addSeparator(card);
+        card.addView(actionRow(L.t("尝试写入 DEVELOPMENT_SETTINGS_ENABLED",
+                "Try enabling DEVELOPMENT_SETTINGS_ENABLED"), new Runnable() {
+            @Override public void run() {
+                tryWriteGlobal(Settings.Global.DEVELOPMENT_SETTINGS_ENABLED, 1);
+            }
+        }));
+        addSeparator(card);
+        card.addView(actionRow(L.t("尝试写入 ADB_ENABLED", "Try enabling ADB_ENABLED"),
+                new Runnable() {
+            @Override public void run() { tryWriteGlobal(Settings.Global.ADB_ENABLED, 1); }
+        }));
+        addSeparator(card);
+        card.addView(actionRow(L.t("复制诊断日志", "Copy diagnostic log"), new Runnable() {
+            @Override public void run() { copyLog(); }
+        }));
+        addSeparator(card);
+        card.addView(actionRow(L.t("分享诊断日志", "Share diagnostic log"), new Runnable() {
+            @Override public void run() { shareLog(); }
+        }));
+        return pane;
+    }
+
+    private LinearLayout exportPane() {
+        LinearLayout pane = paneShell("03", L.t("导出分析", "Export"),
+                L.t("导出仅包含 APK 代码、组件清单和构建信息，不包含应用数据。",
+                        "The export contains APK code, component metadata and build info only, never app data."));
+        LinearLayout card = cardOf(pane);
+        card.addView(actionRow(L.t("导出 FactoryMode APK + 报告（ZIP）",
+                "Export FactoryMode APK + report (ZIP)"), new Runnable() {
+            @Override public void run() { choosePackageExport(EXPORT_FACTORY); }
+        }));
+        addSeparator(card);
+        card.addView(actionRow(L.t("导出 Settings APK + 组件报告（ZIP）",
+                "Export Settings APK + component report (ZIP)"), new Runnable() {
+            @Override public void run() { choosePackageExport(EXPORT_SETTINGS); }
+        }));
+        return pane;
+    }
+
+    private LinearLayout probePane() {
+        LinearLayout pane = paneShell("04", L.t("组件探测", "Component probes"),
+                L.t("灰色按钮表示组件未启用或不可导出，点击后结果记录在日志里。",
+                        "A row may still fail to open; every attempt is recorded in the log."));
+        LinearLayout card = cardOf(pane);
+        candidateList = new LinearLayout(this);
+        candidateList.setOrientation(LinearLayout.VERTICAL);
+        card.addView(candidateList);
+        return pane;
+    }
+
+    private LinearLayout assistPane() {
+        LinearLayout pane = paneShell("05", L.t("连点助手", "Tap assist"),
+                L.t("备用路径：布防后开启无障碍服务，再打开关于设备页，服务会自动连点版本号七次。主流程（快捷入口第一项）不需要本助手。",
+                        "Backup path: arm the assist, enable the accessibility service, then open About device; the service taps the build number seven times. The main firmware route does not need this."));
+        LinearLayout card = cardOf(pane);
+        card.addView(actionRow(L.t("布防连点助手并打开无障碍设置",
+                "Arm tap assist and open Accessibility"), new Runnable() {
+            @Override public void run() {
                 setBuildNumberAssist(true);
                 Toast.makeText(MainActivity.this,
-                        "Assist armed. Enable Settings Entry Helper tap assist.",
+                        L.t("已布防。请在无障碍中开启「Settings Entry Helper tap assist」。",
+                                "Assist armed. Enable 'Settings Entry Helper tap assist'."),
                         Toast.LENGTH_LONG).show();
                 launchAction(Settings.ACTION_ACCESSIBILITY_SETTINGS,
                         "Accessibility settings for tap assist");
             }
-        });
-        addActionButton("Disarm build-number tap assist", new Runnable() {
-            @Override
-            public void run() {
+        }));
+        addSeparator(card);
+        card.addView(actionRow(L.t("解除连点助手", "Disarm build-number tap assist"),
+                new Runnable() {
+            @Override public void run() {
                 setBuildNumberAssist(false);
                 Toast.makeText(MainActivity.this,
-                        "Build-number assist disarmed",
+                        L.t("连点助手已解除", "Build-number assist disarmed"),
                         Toast.LENGTH_SHORT).show();
             }
-        });
+        }));
+        return pane;
+    }
 
-        addSection("Known component probes");
-        candidateList = new LinearLayout(this);
-        candidateList.setOrientation(LinearLayout.VERTICAL);
-        root.addView(candidateList);
-
-        addSection("Log");
+    private LinearLayout logPane() {
+        LinearLayout pane = paneShell("06", L.t("运行日志", "Log"), null);
+        LinearLayout card = cardOf(pane);
         logView = new TextView(this);
         logView.setTextSize(12);
         logView.setTypeface(Typeface.MONOSPACE);
-        logView.setTextColor(Color.rgb(235, 238, 242));
-        logView.setBackgroundColor(Color.rgb(31, 37, 45));
+        logView.setTextColor(LOG_TEXT);
+        GradientDrawable logBg = new GradientDrawable();
+        logBg.setColor(LOG_BG);
+        logBg.setCornerRadius(dp(16));
+        logView.setBackground(logBg);
         logView.setPadding(dp(14), dp(12), dp(14), dp(12));
         logView.setTextIsSelectable(true);
         logView.setSingleLine(false);
@@ -233,80 +499,52 @@ public class MainActivity extends Activity {
         logView.setEllipsize(null);
         logView.setMovementMethod(new ScrollingMovementMethod());
         logView.setVerticalScrollBarEnabled(true);
-        root.addView(logView, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(260)));
-    }
-
-    private void addSection(String label) {
-        TextView section = new TextView(this);
-        section.setText(label);
-        section.setTextSize(20);
-        section.setTypeface(Typeface.DEFAULT_BOLD);
-        section.setTextColor(Color.rgb(25, 30, 36));
-        section.setPadding(0, dp(20), 0, dp(10));
-        root.addView(section);
-    }
-
-    private void addActionButton(String label, final Runnable action) {
-        Button button = new Button(this);
-        button.setText(label);
-        button.setAllCaps(false);
-        button.setTextSize(16);
-        button.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
-        button.setPadding(dp(18), 0, dp(18), 0);
-        button.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                action.run();
-            }
-        });
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(58));
-        params.setMargins(0, 0, 0, dp(10));
-        root.addView(button, params);
+        logView.setText(logText.toString());
+        card.addView(logView, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(520)));
+        return pane;
     }
 
     private void addCandidateButton(final ComponentName component, String label) {
         String key = component.flattenToString();
-        if (!listedCandidates.add(key)) {
+        if (!listedCandidates.add(key) || candidateList == null) {
             return;
         }
-        Button button = new Button(this);
-        button.setText(label + "\n" + component.flattenToShortString());
-        button.setAllCaps(false);
-        button.setTextSize(14);
-        button.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
-        button.setPadding(dp(16), dp(8), dp(16), dp(8));
-        button.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                launchComponent(component);
-            }
-        });
+        candidateList.addView(candidateRow(label, component.flattenToShortString(), component));
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        params.setMargins(0, 0, 0, dp(8));
-        candidateList.addView(button, params);
+        candidateList.addView(makeSeparator(), params);
+    }
+
+    private View makeSeparator() {
+        View line = new View(this);
+        line.setBackgroundColor(SEPARATOR);
+        return line;
     }
 
     private void addKnownCandidates() {
-        addCandidate("About device (AOSP)", "com.android.settings",
+        addCandidate(L.t("关于设备（AOSP）", "About device (AOSP)"), "com.android.settings",
                 "com.android.settings.Settings$MyDeviceInfoActivity");
-        addCandidate("Developer options (AOSP)", "com.android.settings",
+        addCandidate(L.t("开发者选项（AOSP）", "Developer options (AOSP)"), "com.android.settings",
                 "com.android.settings.Settings$DevelopmentSettingsActivity");
-        addCandidate("Developer dashboard (OEM name)", "com.android.settings",
+        addCandidate(L.t("开发者面板（OEM 命名）", "Developer dashboard (OEM name)"),
+                "com.android.settings",
                 "com.android.settings.Settings$DevelopmentSettingsDashboardActivity");
-        addCandidate("ADB QR scanner (AOSP internal)", "com.android.settings",
-                "com.android.settings.development.AdbQrCodeActivity");
-        addCandidate("Wireless debugging (OEM name)", "com.android.settings",
+        addCandidate(L.t("ADB 扫码配对（AOSP 内部）", "ADB QR scanner (AOSP internal)"),
+                "com.android.settings", "com.android.settings.development.AdbQrCodeActivity");
+        addCandidate(L.t("无线调试（OEM 命名）", "Wireless debugging (OEM name)"),
+                "com.android.settings",
                 "com.android.settings.Settings$WirelessDebuggingActivity");
-        addCandidate("Wireless debugging activity (OEM name)", "com.android.settings",
+        addCandidate(L.t("无线调试页（OEM 命名）", "Wireless debugging activity (OEM name)"),
+                "com.android.settings",
                 "com.android.settings.development.WirelessDebuggingActivity");
-        addCandidate("System dashboard", "com.android.settings",
+        addCandidate(L.t("系统面板", "System dashboard"), "com.android.settings",
                 "com.android.settings.Settings$SystemDashboardActivity");
-        addCandidate("Miui developer options (OEM name)", "com.android.settings",
+        addCandidate(L.t("MIUI 开发者选项（OEM 命名）", "Miui developer options (OEM name)"),
+                "com.android.settings",
                 "com.android.settings.Settings$MiuiDevelopmentSettingsActivity");
-        addCandidate("Miui developer options (alternate)", "com.android.settings",
+        addCandidate(L.t("MIUI 开发者选项（备用）", "Miui developer options (alternate)"),
+                "com.android.settings",
                 "com.android.settings.Settings$MiuiDeveloperSettingsActivity");
     }
 
@@ -343,7 +581,7 @@ public class MainActivity extends Activity {
                 String exportState = activity.exported ? "exported" : "not-exported";
                 String enabledState = activity.enabled ? "enabled" : "disabled";
                 addCandidateButton(new ComponentName(SETTINGS_PACKAGE, activity.name),
-                        "Found [" + exportState + ", " + enabledState + "]");
+                        L.t("发现", "Found") + " [" + exportState + ", " + enabledState + "]");
             }
         } catch (PackageManager.NameNotFoundException e) {
             appendLog("  Settings package not found: " + e);
@@ -378,7 +616,7 @@ public class MainActivity extends Activity {
         new AlertDialog.Builder(this)
                 .setTitle(title)
                 .setMessage(message)
-                .setPositiveButton("OK", null)
+                .setPositiveButton(L.t("好的", "OK"), null)
                 .show();
     }
 
@@ -401,8 +639,9 @@ public class MainActivity extends Activity {
             appendLog("  host fixedFragment=" + fixedFragment);
             if (!info.exported || !info.enabled || !info.applicationInfo.enabled
                     || fixedFragment != null) {
-                showMessage("Firmware route unavailable", "The host is disabled, private, "
-                        + "or has a fixed page. No other component was launched.");
+                showMessage(L.t("固件路由不可用", "Firmware route unavailable"),
+                        L.t("宿主被禁用、不导出或固定了页面；未启动任何其他组件。",
+                                "The host is disabled, private, or has a fixed page. No other component was launched."));
                 return;
             }
             Intent intent = new Intent();
@@ -413,7 +652,7 @@ public class MainActivity extends Activity {
             appendLog("  startActivity=OK; this does not confirm that the fragment loaded.");
         } catch (Exception e) {
             appendLog("  ERROR: " + describe(e));
-            showMessage("Firmware route failed", describe(e));
+            showMessage(L.t("固件路由失败", "Firmware route failed"), describe(e));
         }
     }
 
@@ -428,13 +667,14 @@ public class MainActivity extends Activity {
 
     private void choosePackageExport(int requestCode) {
         if (exporting) {
-            showMessage("Export in progress", "Please wait for the current export to finish.");
+            showMessage(L.t("正在导出", "Export in progress"),
+                    L.t("请等待当前导出完成。", "Please wait for the current export to finish."));
             return;
         }
         try {
             getPackageInfoCompat(exportPackageName(requestCode), 0);
         } catch (Exception e) {
-            showMessage("Package unavailable", exportPackageName(requestCode)
+            showMessage(L.t("包不可用", "Package unavailable"), exportPackageName(requestCode)
                     + "\n" + describe(e));
             return;
         }
@@ -446,8 +686,9 @@ public class MainActivity extends Activity {
             startActivityForResult(intent, requestCode);
         } catch (Exception e) {
             appendLog("[EXPORT] File picker unavailable: " + describe(e));
-            showMessage("Cannot open save dialog", describe(e)
-                    + "\nThe system document picker may be disabled or missing.");
+            showMessage(L.t("无法打开保存对话框", "Cannot open save dialog"), describe(e)
+                    + "\n" + L.t("系统文件选择器可能被禁用或缺失。",
+                            "The system document picker may be disabled or missing."));
         }
     }
 
@@ -458,15 +699,15 @@ public class MainActivity extends Activity {
             return;
         }
         if (resultCode != RESULT_OK || data == null || data.getData() == null) {
-            Toast.makeText(this, "Export cancelled", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, L.t("已取消导出", "Export cancelled"), Toast.LENGTH_SHORT).show();
             return;
         }
         final Uri destination = data.getData();
         final String packageName = exportPackageName(requestCode);
         final String fileName = exportFileName(requestCode);
         exporting = true;
-        Toast.makeText(this, "Exporting " + packageName + ". Please wait.",
-                Toast.LENGTH_LONG).show();
+        Toast.makeText(this, L.t("正在导出", "Exporting") + " " + packageName + ". "
+                + L.t("请稍候。", "Please wait."), Toast.LENGTH_LONG).show();
         new Thread(new Runnable() {
             @Override
             public void run() {
@@ -477,10 +718,12 @@ public class MainActivity extends Activity {
                         public void run() {
                             exporting = false;
                             appendLog("\n[EXPORT] Success\n" + report);
-                            showMessage("Export saved", "The ZIP contains APK code, "
-                                    + "component metadata and build information, not app data.\n\n"
-                                    + "Copy " + fileName + " to the Mac for analysis.\n\n"
-                                    + report);
+                            showMessage(L.t("导出已保存", "Export saved"),
+                                    L.t("ZIP 内包含 APK 代码、组件元数据和构建信息，不包含应用数据。",
+                                            "The ZIP contains APK code, component metadata and build information, not app data.")
+                                    + "\n\n" + L.t("请将", "Copy ") + " " + fileName + " "
+                                    + L.t("拷贝到电脑用于分析。", "to the Mac for analysis.")
+                                    + "\n\n" + report);
                         }
                     });
                 } catch (final Exception e) {
@@ -489,8 +732,9 @@ public class MainActivity extends Activity {
                         public void run() {
                             exporting = false;
                             appendLog("\n[EXPORT] Failed: " + describe(e));
-                            showMessage("Export failed", describe(e)
-                                    + "\nDelete any incomplete ZIP before retrying.");
+                            showMessage(L.t("导出失败", "Export failed"), describe(e)
+                                    + "\n" + L.t("重试前请先删除不完整的 ZIP。",
+                                            "Delete any incomplete ZIP before retrying."));
                         }
                     });
                 }
@@ -711,7 +955,7 @@ public class MainActivity extends Activity {
             ClipboardManager clipboard = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
             clipboard.setPrimaryClip(ClipData.newPlainText("Settings Entry Helper log",
                     logText.toString()));
-            Toast.makeText(this, "Log copied", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, L.t("日志已复制", "Log copied"), Toast.LENGTH_SHORT).show();
         } catch (Exception e) {
             appendLog("Clipboard error: " + describe(e));
         }
@@ -722,7 +966,8 @@ public class MainActivity extends Activity {
             Intent intent = new Intent(Intent.ACTION_SEND);
             intent.setType("text/plain");
             intent.putExtra(Intent.EXTRA_TEXT, logText.toString());
-            startActivity(Intent.createChooser(intent, "Share diagnostic log"));
+            startActivity(Intent.createChooser(intent,
+                    L.t("分享诊断日志", "Share diagnostic log")));
         } catch (Exception e) {
             appendLog("Share error: " + describe(e));
         }

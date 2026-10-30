@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="app_name">Settings Entry Helper</string>
+    <string name="assist_label">Settings Entry Helper tap assist</string>
     <string name="accessibility_description">Optional helper that clicks the Android build-number row seven times while the Settings app is open. It is scoped to Settings packages and can be turned off from the helper app.</string>
 </resources>

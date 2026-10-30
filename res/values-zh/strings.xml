@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">设置入口助手</string>
+    <string name="assist_label">设置入口助手连点辅助</string>
+    <string name="accessibility_description">可选辅助服务：在系统设置打开期间自动连点「版本号」七次。仅作用于系统设置相关页面，可在助手应用内关闭。</string>
+</resources>
