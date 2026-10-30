@@ -8,8 +8,8 @@
 
 ## 下载
 
-- [下载最新版 APK](https://github.com/liumumu666/xiaomi-oh27-developer-options/releases/latest)
-- [v1.4 发布页](https://github.com/liumumu666/xiaomi-oh27-developer-options/releases/tag/v1.4)
+- [下载最新版 APK](https://github.com/marrymebaby/xiaomi-oh27-developer-options/releases/latest)
+- [v1.4 发布页](https://github.com/marrymebaby/xiaomi-oh27-developer-options/releases/tag/v1.4)
 
 下载附件 `SettingsEntryHelper-v1.4.apk`，不是 GitHub 自动生成的 Source code 压缩包。APK 使用开发调试证书签名，不是小米官方应用。
 
@@ -95,7 +95,7 @@ com.android.settings/com.android.settings.Settings$WifiSettingsActivity
 依赖：JDK（需提供 `javac` 和 `keytool`）、Android SDK Platform 35、Build-Tools 35.0.0。无需 Gradle，构建脚本调用 `aapt2`、`javac`、`d8`、`zipalign` 和 `apksigner`。
 
 ```sh
-git clone https://github.com/liumumu666/xiaomi-oh27-developer-options.git
+git clone https://github.com/marrymebaby/xiaomi-oh27-developer-options.git
 cd xiaomi-oh27-developer-options
 
 # 如 SDK 不在默认位置，请修改为自己的路径。
