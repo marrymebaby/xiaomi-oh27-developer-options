@@ -71,6 +71,7 @@ public class MainActivity extends Activity {
     private LinearLayout navColumn;
     private final List<TextView> navRows = new ArrayList<>();
     private final List<View> panes = new ArrayList<>();
+    private final List<LinearLayout> paneCards = new ArrayList<>();
     private final Set<String> listedCandidates = new HashSet<>();
     private int selected;
 
@@ -79,9 +80,9 @@ public class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
         L.load(this);
         buildUi();
-        appendLog(L.t("Settings Entry Helper started", "设置入口助手已启动"));
-        appendLog(L.t("No root. Settings export copies APK code only, not app data.",
-                "无 root。设置导出仅复制 APK 代码，不包含应用数据。"));
+        appendLog(L.t("设置入口助手已启动", "Settings Entry Helper started"));
+        appendLog(L.t("无 root。设置导出仅复制 APK 代码，不包含应用数据。",
+                "No root. Settings export copies APK code only, not app data."));
         readState();
         addKnownCandidates();
         scanSettingsActivities();
@@ -185,6 +186,8 @@ public class MainActivity extends Activity {
             @Override public void onClick(View v) {
                 L.set(MainActivity.this, L.ZH.equals(L.current()) ? L.EN : L.ZH);
                 buildUi();
+                listedCandidates.clear();
+                addKnownCandidates();
                 showPane(selected);
             }
         });
@@ -197,10 +200,12 @@ public class MainActivity extends Activity {
         card.setPadding(dp(24), dp(20), dp(24), dp(24));
         LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.MATCH_PARENT);
+        cardParams.weight = 1f;
         cardParams.setMargins(dp(4), dp(14), dp(14), dp(14));
         root.addView(card, cardParams);
 
         panes.clear();
+        paneCards.clear();
         panes.add(quickPane());
         panes.add(diagPane());
         panes.add(exportPane());
@@ -210,7 +215,7 @@ public class MainActivity extends Activity {
         for (View pane : panes) {
             pane.setVisibility(View.GONE);
             card.addView(pane, new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         }
     }
 
@@ -227,14 +232,13 @@ public class MainActivity extends Activity {
         }
     }
 
-    private LinearLayout paneShell(String number, String caption, String note) {
+    private ScrollView paneShell(String number, String caption, String note) {
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
         LinearLayout pane = new LinearLayout(this);
         pane.setOrientation(LinearLayout.VERTICAL);
         scroll.addView(pane, new ScrollView.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        pane.setTag(scroll);
 
         TextView header = new TextView(this);
         header.setText(number + "   " + caption);
@@ -251,6 +255,7 @@ public class MainActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         cardParams.setMargins(0, dp(14), 0, 0);
         pane.addView(card, cardParams);
+        paneCards.add(card);
 
         if (note != null) {
             TextView noteView = new TextView(this);
@@ -260,11 +265,11 @@ public class MainActivity extends Activity {
             noteView.setPadding(0, dp(10), 0, dp(12));
             pane.addView(noteView);
         }
-        return pane;
+        return scroll;
     }
 
-    private LinearLayout cardOf(View pane) {
-        return (LinearLayout) ((ViewGroup) pane).getChildAt(1);
+    private LinearLayout currentCard() {
+        return paneCards.get(paneCards.size() - 1);
     }
 
     private void addSeparator(LinearLayout card) {
@@ -339,11 +344,11 @@ public class MainActivity extends Activity {
         return row;
     }
 
-    private LinearLayout quickPane() {
-        LinearLayout pane = paneShell("01", L.t("快捷入口", "Quick entries"),
+    private ScrollView quickPane() {
+        ScrollView pane = paneShell("01", L.t("快捷入口", "Quick entries"),
                 L.t("打开系统隐藏页面后请观察是否自动关闭；固件路由是实测可用的开发者面板入口。",
                         "Open a system page, then watch whether it closes itself. The firmware route is the verified developer dashboard entry."));
-        LinearLayout card = cardOf(pane);
+        LinearLayout card = currentCard();
         card.addView(actionRow(L.t("打开开发者面板（OH27 固件路由）",
                 "Open developer dashboard (OH27 firmware route)"), new Runnable() {
             @Override public void run() { openFirmwareDeveloperDashboard(); }
@@ -387,11 +392,11 @@ public class MainActivity extends Activity {
         return pane;
     }
 
-    private LinearLayout diagPane() {
-        LinearLayout pane = paneShell("02", L.t("诊断与写入", "Diagnostics"),
+    private ScrollView diagPane() {
+        ScrollView pane = paneShell("02", L.t("诊断与写入", "Diagnostics"),
                 L.t("写入类操作在未授权时会被系统拒绝并记录到日志；日志内容保持英文原文便于检索。",
                         "Write attempts are rejected by the system without permission and logged; log lines stay in English for searchability."));
-        LinearLayout card = cardOf(pane);
+        LinearLayout card = currentCard();
         card.addView(actionRow(L.t("读取当前设置状态", "Read current settings state"), new Runnable() {
             @Override public void run() {
                 int start = logText.length();
@@ -423,11 +428,11 @@ public class MainActivity extends Activity {
         return pane;
     }
 
-    private LinearLayout exportPane() {
-        LinearLayout pane = paneShell("03", L.t("导出分析", "Export"),
+    private ScrollView exportPane() {
+        ScrollView pane = paneShell("03", L.t("导出分析", "Export"),
                 L.t("导出仅包含 APK 代码、组件清单和构建信息，不包含应用数据。",
                         "The export contains APK code, component metadata and build info only, never app data."));
-        LinearLayout card = cardOf(pane);
+        LinearLayout card = currentCard();
         card.addView(actionRow(L.t("导出 FactoryMode APK + 报告（ZIP）",
                 "Export FactoryMode APK + report (ZIP)"), new Runnable() {
             @Override public void run() { choosePackageExport(EXPORT_FACTORY); }
@@ -440,22 +445,22 @@ public class MainActivity extends Activity {
         return pane;
     }
 
-    private LinearLayout probePane() {
-        LinearLayout pane = paneShell("04", L.t("组件探测", "Component probes"),
+    private ScrollView probePane() {
+        ScrollView pane = paneShell("04", L.t("组件探测", "Component probes"),
                 L.t("灰色按钮表示组件未启用或不可导出，点击后结果记录在日志里。",
                         "A row may still fail to open; every attempt is recorded in the log."));
-        LinearLayout card = cardOf(pane);
+        LinearLayout card = currentCard();
         candidateList = new LinearLayout(this);
         candidateList.setOrientation(LinearLayout.VERTICAL);
         card.addView(candidateList);
         return pane;
     }
 
-    private LinearLayout assistPane() {
-        LinearLayout pane = paneShell("05", L.t("连点助手", "Tap assist"),
+    private ScrollView assistPane() {
+        ScrollView pane = paneShell("05", L.t("连点助手", "Tap assist"),
                 L.t("备用路径：布防后开启无障碍服务，再打开关于设备页，服务会自动连点版本号七次。主流程（快捷入口第一项）不需要本助手。",
                         "Backup path: arm the assist, enable the accessibility service, then open About device; the service taps the build number seven times. The main firmware route does not need this."));
-        LinearLayout card = cardOf(pane);
+        LinearLayout card = currentCard();
         card.addView(actionRow(L.t("布防连点助手并打开无障碍设置",
                 "Arm tap assist and open Accessibility"), new Runnable() {
             @Override public void run() {
@@ -481,9 +486,9 @@ public class MainActivity extends Activity {
         return pane;
     }
 
-    private LinearLayout logPane() {
-        LinearLayout pane = paneShell("06", L.t("运行日志", "Log"), null);
-        LinearLayout card = cardOf(pane);
+    private ScrollView logPane() {
+        ScrollView pane = paneShell("06", L.t("运行日志", "Log"), null);
+        LinearLayout card = currentCard();
         logView = new TextView(this);
         logView.setTextSize(12);
         logView.setTypeface(Typeface.MONOSPACE);
